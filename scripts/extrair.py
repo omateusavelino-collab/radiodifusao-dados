@@ -99,6 +99,8 @@ def decodificar(ds, cols):
 def para_texto(nome, v):
     if v is None:
         return ""
+    if nome in COLUNAS_DATA and isinstance(v, str):
+        return v[:10]                      # o BI devolve parte das datas como AAAA-MM-DDT00:00:00
     if nome in COLUNAS_DATA and isinstance(v, (int, float)):
         return (dt.datetime(1970, 1, 1) + dt.timedelta(milliseconds=v)).strftime("%Y-%m-%d")
     return str(v)
@@ -153,7 +155,7 @@ def validar(cols, linhas):
         dou = d.get("Data_DOU_Documento")
         if not (isinstance(uf, str) and len(uf) == 2):
             erros += 1
-        elif dou is not None and not isinstance(dou, (int, float)):
+        elif dou is not None and not (isinstance(dou, (int, float)) or (isinstance(dou, str) and dou[:4].isdigit())):
             erros += 1
     if erros > len(linhas) * 0.05:
         raise RuntimeError(f"Decodificacao desalinhada: {erros}/{len(linhas)} linhas fora do formato. Veja a amostra acima.")
@@ -208,8 +210,12 @@ def main():
         ds = ler_resposta(pedir(montar_corpo(["Data Atualização"], entidade="Data Atualização",
                                              filtro=False, ordenar=None)), ["Data Atualização"])
         v = decodificar(ds, ["Data Atualização"])[0][0]
-        open("data/data_bi.txt", "w").write(para_texto("Data_DOU_Documento", v))
-        print("Data de atualizacao do BI:", open("data/data_bi.txt").read())
+        txt = para_texto("Data_DOU_Documento", v)
+        if txt[:4].isdigit():
+            open("data/data_bi.txt", "w").write(txt)
+            print("Data de atualizacao do BI:", txt)
+        else:
+            print("BI nao devolveu a data de atualizacao; usando a data da execucao.")
     except Exception as e:
         print("Sem data de atualizacao do BI (usando a data da execucao):", str(e)[:150])
 
