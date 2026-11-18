@@ -86,7 +86,10 @@ def decodificar(ds, cols):
                 k += 1
                 col = esquema[i] if esquema and i < len(esquema) else {}
                 if "DN" in col and v is not None:
-                    v = dicts[col["DN"]][v]
+                    d = dicts.get(col["DN"], [])
+                    # indice do dicionario (int); se vier texto/valor literal, mantem como esta
+                    if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < len(d):
+                        v = d[v]
             atual.append(v)
         anterior = atual
         saida.append(atual)
@@ -139,17 +142,37 @@ def ler_resposta(j, cols):
     return ds
 
 
+def validar(cols, linhas):
+    """Confere se a decodificacao alinhou as colunas (UF com 2 letras, data como numero)."""
+    if not linhas:
+        raise RuntimeError("O BI devolveu 0 linhas na primeira pagina.")
+    erros = 0
+    for l in linhas:
+        d = dict(zip(cols, l))
+        uf = d.get("UF")
+        dou = d.get("Data_DOU_Documento")
+        if not (isinstance(uf, str) and len(uf) == 2):
+            erros += 1
+        elif dou is not None and not isinstance(dou, (int, float)):
+            erros += 1
+    if erros > len(linhas) * 0.05:
+        raise RuntimeError(f"Decodificacao desalinhada: {erros}/{len(linhas)} linhas fora do formato. Veja a amostra acima.")
+
+
 def baixar(cols):
     linhas, restart, vistos = [], None, set()
     for pagina in range(1, 400):
         ds = ler_resposta(pedir(montar_corpo(cols, restart)), cols)
         novas = decodificar(ds, cols)
+        if pagina == 1:
+            print("  amostra:", novas[:2], flush=True)
+            validar(cols, novas)
         linhas.extend(novas)
         print(f"  pagina {pagina}: +{len(novas)} (total {len(linhas)})", flush=True)
         rt = ds.get("RT")
         if not rt and len(novas) >= PAGINA:
             rt = [[token(c, v) for c, v in zip(cols, novas[-1])]]
-        if ds.get("IC") or not rt or not novas:
+        if not rt or not novas or (ds.get("IC") and len(novas) < PAGINA):
             break
         chave = json.dumps(rt)
         if chave in vistos:
