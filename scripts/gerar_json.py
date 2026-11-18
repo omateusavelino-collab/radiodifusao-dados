@@ -24,7 +24,7 @@ def main():
         if obrigatoria not in d.columns:
             sys.exit(f"A coluna {obrigatoria} nao veio do BI. Sem ela nao da para contar estacoes por municipio.")
     d = d.drop_duplicates()
-    d["dt"] = pd.to_datetime(d["Data_DOU_Documento"], errors="coerce")
+    d["dt"] = pd.to_datetime(d["Data_DOU_Documento"].str[:10], format="%Y-%m-%d", errors="coerce")
     d = d[d.dt.isna() | (d.dt <= HOJE)]
     # Regra da planilha: Status_Valido = Nao quando o estado do canal termina em C0, C5 ou CE-01
     d["valido"] = ~d["Status_state"].fillna("").str.contains(r"-(?:C0|C5|CE-01)$", regex=True)
@@ -40,12 +40,20 @@ def main():
     v["ano"] = v.Fistel.map(primeira).dt.year
     partes = [v[["Ibge", "UF", "Municipio", "Servico", "Finalidade", "ano"]]]
 
-    rc = ler("data/fixos/radcom.csv")
+    rc_bi = d[d.Servico == "RADCOM"]
+    if len(rc_bi) > 1000:                       # o BI ja traz as comunitarias
+        rc = rc_bi.copy()
+        print(f"Comunitarias: {len(rc)} linhas vindas do BI")
+    else:
+        rc = ler("data/fixos/radcom.csv")
+        print("Comunitarias: BI sem RADCOM, usando data/fixos/radcom.csv")
+        if rc is not None:
+            rc = rc.rename(columns={"Município": "Municipio"})
     if rc is not None:
-        rc = rc.rename(columns={"Município": "Municipio"})
         rc["Servico"] = "RADCOM"
         rc["Finalidade"] = "Comunitária"
-        rc["ano"] = pd.to_datetime(rc["Data_DOU_Documento"], errors="coerce").dt.year
+        rc["ano"] = pd.to_datetime(rc["Data_DOU_Documento"].astype(str).str[:10], format="%Y-%m-%d", errors="coerce").dt.year
+        rc = rc[rc.ano.isna() | (rc.ano <= HOJE.year)]
         partes.append(rc[["Ibge", "UF", "Municipio", "Servico", "Finalidade", "ano"]])
     else:
         print("AVISO: data/fixos/radcom.csv nao encontrado; rádios comunitárias ficam fora do mapa.")
@@ -79,11 +87,12 @@ def main():
         t = ler(f"data/fixos/{nome}.csv")
         if t is None:
             return d.iloc[0:0]
-        t["dt"] = pd.to_datetime(t["Data_DOU_Documento"], errors="coerce")
+        t["dt"] = pd.to_datetime(t["Data_DOU_Documento"].astype(str).str[:10], format="%Y-%m-%d", errors="coerce")
         return t[t.dt <= HOJE]
 
-    rad = dtfix("radcom")
-    mig = pd.concat([dtfix("migracao_am_fm"), dtfix("migracao_oc_ot_fm")], ignore_index=True)
+    rad = d[(d.Servico == "RADCOM") & (d.dt <= HOJE)] if len(rc_bi) > 1000 else dtfix("radcom")
+    mig_bi = d[d.Servico.isin(["AM para FM", "OC e OT para FM"]) & (d.dt <= HOJE)]
+    mig = mig_bi if len(mig_bi) > 1000 else pd.concat([dtfix("migracao_am_fm"), dtfix("migracao_oc_ot_fm")], ignore_index=True)
     P = {"novas": [["Novos canais (RTV)", mensal(d[d.novas_rtv])], ["Digitalizações (RTV e GTV)", mensal(d[d.dig])],
                    ["RTR", mensal(d[d.rtr])], ["Rádios comunitárias", mensal(rad) if len(rad) else {}],
                    ["Rádios", mensal(d[d.radio])], ["TVs (geradoras)", mensal(d[d.tv])]],
@@ -93,7 +102,9 @@ def main():
     prod = {"anos": anos, "nov": serie(d.novas_rtv), "dig": serie(d.dig), "P": P,
             "parcial": {"ano": ano_atual, "ate_mes": ultimo_mes}}
 
-    ref_bi = open("data/data_bi.txt").read().strip() if os.path.exists("data/data_bi.txt") else HOJE.strftime("%Y-%m-%d")
+    ref_bi = open("data/data_bi.txt").read().strip() if os.path.exists("data/data_bi.txt") else ""
+    if not ref_bi[:4].isdigit():
+        ref_bi = HOJE.strftime("%Y-%m-%d")
     meta = {"data_referencia": ref_bi, "gerado_em": HOJE.strftime("%Y-%m-%d"), "linhas_bi": int(len(d)),
             "estacoes": int(len(a)), "municipios": len(muns), "anos_mapa": ["Até 2018"] + [str(y) for y in anos],
             "rtv_estacoes": int(((a.s == 1)).sum()), "com_estacoes": int(((a.s == 0)).sum())}
