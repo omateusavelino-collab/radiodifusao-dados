@@ -2,8 +2,9 @@ name: Atualizar dados
 
 on:
   schedule:
-    - cron: '0 9 * * *'      # 9h UTC = 6h em Brasília
-  workflow_dispatch:         # botão "Run workflow" para rodar na mão
+    - cron: '23 9 * * *'     # 6h23 em Brasilia (9h23 UTC). Minuto "quebrado" falha menos que a hora cheia
+    - cron: '47 12 * * *'    # reserva: 9h47 em Brasilia. So trabalha se a de cima nao rodou
+  workflow_dispatch:         # botao "Run workflow" para rodar na mao
 
 permissions:
   contents: write
@@ -15,28 +16,46 @@ concurrency:
 jobs:
   atualizar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
+      - name: Ja atualizou hoje?
+        id: chk
+        run: |
+          HOJE=$(date -u +%F)
+          ULTIMA=$(cat data/ultima_execucao.txt 2>/dev/null || true)
+          if [ "${{ github.event_name }}" = "schedule" ] && [ "$ULTIMA" = "$HOJE" ]; then
+            echo "pular=true" >> "$GITHUB_OUTPUT"
+            echo "Ja atualizado hoje. Nada a fazer."
+          else
+            echo "pular=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-python@v5
+        if: steps.chk.outputs.pular != 'true'
         with:
           python-version: '3.12'
           cache: pip
 
-      - run: pip install -r requirements.txt
+      - name: Instalar bibliotecas
+        if: steps.chk.outputs.pular != 'true'
+        run: pip install -r requirements.txt
 
       - name: Baixar dados do Power BI
+        if: steps.chk.outputs.pular != 'true'
         run: python scripts/extrair.py
 
       - name: Gerar JSONs
+        if: steps.chk.outputs.pular != 'true'
         run: python scripts/gerar_json.py
 
-      - name: Salvar no repositório
+      - name: Salvar no repositorio
+        if: steps.chk.outputs.pular != 'true'
         run: |
           git config user.name "bot-dados"
           git config user.email "bot@users.noreply.github.com"
           date -u +%F > data/ultima_execucao.txt
           git add data
-          git diff --staged --quiet || git commit -m "Atualização $(date -u +%F)"
+          git diff --staged --quiet || git commit -m "Atualizacao $(date -u +%F)"
           git push
